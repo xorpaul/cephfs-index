@@ -1,0 +1,7 @@
+/bin/
+*.db
+*.db.new
+*.db-journal
+commit.sh
+*.pprof
+build/
