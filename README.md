@@ -10,6 +10,34 @@ Three binaries:
 - **`cephfs-search`**: regex search over entry names in either backend. It prints uid, size, mtime and path.
 - **`cephfs-dentry-decode`**: decodes one raw dentry omap value or the root inode, dumped with the `rados` CLI. Pure Go, static.
 
+## TL;DR
+
+1. Download `cephfs-indexd` from the [releases](https://github.com/xorpaul/cephfs-index/releases) and copy it to a host that can reach the cluster and has `librados2` installed (glibc ≥ 2.34). The release contains only `cephfs-indexd`; build `cephfs-search` with `make search` (see [Build](#build)).
+   ```bash
+   curl -fLo cephfs-indexd https://github.com/xorpaul/cephfs-index/releases/download/v1.0.0/cephfs-index_v1.0.0_linux-amd64 && chmod +x cephfs-indexd
+   ```
+2. Give it a cephx key that can read the metadata pool. Either run it on an admin host with `client.admin`, or create a dedicated client and pass `--id cephfs-index`:
+   ```bash
+   ceph auth get-or-create client.cephfs-index mon 'allow r' osd 'allow r pool=<metadata-pool>' -o /etc/ceph/ceph.client.cephfs-index.keyring
+   ```
+   These caps are enough for `probe` and `build`; reads of data pools and admin commands are refused. `--flush-journal` also needs the `ceph` CLI and `mds 'allow *'`: the MDS refuses `ceph tell` with `mds 'allow r'` (EACCES). Note that `mds 'allow *'` would also let the key holder change metadata through a mount.
+3. Build a SQLite index and search it:
+   ```bash
+   ./cephfs-indexd build --fs myfs --id cephfs-index    # writes /var/lib/cephfs-index/myfs.db
+   ./cephfs-search --fs myfs '^node_modules$'
+   ```
+4. To use PostgreSQL instead, create a database and role, put the password in `~/.pgpass` (mode 0600) and pass the DSN without it:
+   ```bash
+   # as postgres: CREATE ROLE cephfs_index LOGIN PASSWORD '...';
+   #              CREATE DATABASE cephfs_index OWNER cephfs_index ENCODING 'SQL_ASCII' TEMPLATE template0;
+   echo 'pg.example.org:5432:cephfs_index:cephfs_index:PASSWORD' >> ~/.pgpass && chmod 600 ~/.pgpass
+   export CEPHFS_INDEX_PG_DSN="host=pg.example.org dbname=cephfs_index user=cephfs_index"
+   ./cephfs-indexd build --fs myfs --id cephfs-index    # --pg-dsn defaults to $CEPHFS_INDEX_PG_DSN
+   ./cephfs-search '^node_modules$'                     # searches every indexed volume
+   ```
+
+Start with `cephfs-indexd probe --max-inflight 4` on a small volume to see what the walk costs your OSDs; see [OSD load controls](#osd-load-controls).
+
 ## How it works
 
 - Each directory fragment is a RADOS object `<dir-ino-hex>.<frag-hex>` in the metadata pool.
