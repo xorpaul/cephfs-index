@@ -49,6 +49,7 @@ type matchRow struct {
 	uid    int64
 	size   int64
 	mtime  int64
+	ctime  int64
 }
 
 // Open reads the meta table of fsName schema and checks that the UNLOGGED
@@ -135,7 +136,7 @@ func (d *DB) Search(ctx context.Context, q index.Query, emit func(index.Match) e
 		return fmt.Sprintf("$%d", len(args))
 	}
 
-	sb.WriteString(`SELECT parent, name, ino, type, uid, size, mtime FROM ` + qi(d.fsName) + `.entries WHERE `)
+	sb.WriteString(`SELECT parent, name, ino, type, uid, size, mtime, ctime FROM ` + qi(d.fsName) + `.entries WHERE `)
 
 	fullScan := true
 	if prefix := index.NamePrefix(q.Pattern); prefix != "" {
@@ -202,7 +203,7 @@ func (d *DB) Search(ctx context.Context, q index.Query, emit func(index.Match) e
 		candidates++
 		var r matchRow
 		var typ string
-		if err := pgRows.Scan(&r.parent, &r.name, &r.ino, &typ, &r.uid, &r.size, &r.mtime); err != nil {
+		if err := pgRows.Scan(&r.parent, &r.name, &r.ino, &typ, &r.uid, &r.size, &r.mtime, &r.ctime); err != nil {
 			pgRows.Close()
 			return err
 		}
@@ -235,6 +236,7 @@ func (d *DB) Search(ctx context.Context, q index.Query, emit func(index.Match) e
 			UID:   uint32(r.uid),
 			Size:  r.size,
 			Mtime: r.mtime,
+			Ctime: r.ctime,
 			Path:  dir + "/" + r.name,
 		}); err != nil {
 			return err

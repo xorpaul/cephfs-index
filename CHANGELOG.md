@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.1.0 (2026-10-06)
+
+### Added
+- **ctime in index and search output** — `ctime` (inode change time) is now stored alongside `mtime` for every object in both the SQLite and PostgreSQL backends. `cephfs-search` includes it in results. The PostgreSQL covering name index is extended to include `ctime` so searches remain index-only.
+
 ## v1.0.0 (2026-10-01)
 
 First public release.

@@ -42,7 +42,7 @@ import (
 	"github.com/xorpaul/cephfs-index/internal/scan"
 )
 
-var entryCols = []string{"seq", "parent", "name", "ino", "type", "part", "uid", "gid", "size", "mtime", "rctime"}
+var entryCols = []string{"seq", "parent", "name", "ino", "type", "part", "uid", "gid", "size", "mtime", "ctime", "rctime"}
 
 // Options tunes the load. Zero values fall back to the defaults below.
 type Options struct {
@@ -179,6 +179,7 @@ const entryColsDDL = `
 	gid    BIGINT   NOT NULL,
 	size   BIGINT   NOT NULL,
 	mtime  BIGINT   NOT NULL,
+	ctime  BIGINT   NOT NULL,
 	rctime BIGINT   NOT NULL`
 
 // Create acquires an advisory lock for fsName, drops any leftover staging
@@ -402,7 +403,7 @@ func (w *Writer) closeLast() {
 // nameIndexInclude are the entries columns a search reads, stored in the
 // name index so a search is an index-only scan: on HDD storage each heap
 // fetch is a random read (18 s for 501 rows of a common name).
-const nameIndexInclude = `parent, ino, type, uid, size, mtime`
+const nameIndexInclude = `parent, ino, type, uid, size, mtime, ctime`
 
 // chunkStmts builds a committed leaf: the covering name index, its dir rows
 // upserted into dirs, then VACUUM (ANALYZE). COPY FREEZE already wrote the
@@ -886,6 +887,7 @@ func appendRow(b []byte, seq int64, e *scan.Entry, part int16) []byte {
 	i8(int64(e.GID))
 	i8(int64(e.Size))
 	i8(e.Mtime)
+	i8(e.Ctime)
 	i8(e.RCtime)
 	return b
 }

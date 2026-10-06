@@ -67,6 +67,7 @@ type Match struct {
 	UID   uint32
 	Size  int64
 	Mtime int64 // Unix seconds
+	Ctime int64 // Unix seconds
 	Path  string
 }
 
@@ -92,7 +93,7 @@ func (x *Index) Search(ctx context.Context, q Query, emit func(Match) error) err
 		idList = idList[n:]
 
 		var sb strings.Builder
-		sb.WriteString("SELECT name_id, parent, type, uid, size, mtime FROM entries WHERE name_id IN (")
+		sb.WriteString("SELECT name_id, parent, type, uid, size, mtime, ctime FROM entries WHERE name_id IN (")
 		args := make([]any, 0, n+2)
 		for i, id := range batch {
 			if i > 0 {
@@ -112,7 +113,7 @@ func (x *Index) Search(ctx context.Context, q Query, emit func(Match) error) err
 			args = append(args, q.UID, int64(scan.TypeHardlink))
 		}
 		type hit struct {
-			nameID, parent, typ, uid, size, mtime int64
+			nameID, parent, typ, uid, size, mtime, ctime int64
 		}
 		var hits []hit
 		rows, err := x.db.QueryContext(ctx, sb.String(), args...)
@@ -121,7 +122,7 @@ func (x *Index) Search(ctx context.Context, q Query, emit func(Match) error) err
 		}
 		for rows.Next() {
 			var h hit
-			if err := rows.Scan(&h.nameID, &h.parent, &h.typ, &h.uid, &h.size, &h.mtime); err != nil {
+			if err := rows.Scan(&h.nameID, &h.parent, &h.typ, &h.uid, &h.size, &h.mtime, &h.ctime); err != nil {
 				rows.Close()
 				return err
 			}
@@ -138,7 +139,7 @@ func (x *Index) Search(ctx context.Context, q Query, emit func(Match) error) err
 			}
 			if err := emit(Match{
 				Type: byte(h.typ), UID: uint32(h.uid),
-				Size: h.size, Mtime: h.mtime,
+				Size: h.size, Mtime: h.mtime, Ctime: h.ctime,
 				Path: dir + "/" + ids[h.nameID],
 			}); err != nil {
 				return err

@@ -85,6 +85,7 @@ type Entry struct {
 	UID, GID  uint32
 	Size      uint64
 	Mtime     int64
+	Ctime     int64
 	RCtime    int64 // dirs only
 	RemoteIno uint64
 }
@@ -378,7 +379,7 @@ func (s *Scanner) entry(it item, key string, val []byte, children *[]item) (Entr
 			s.Stats.Expected.Add(1)
 		}
 	}
-	e.Ino, e.UID, e.GID, e.Size, e.Mtime = in.Ino, in.UID, in.GID, in.Size, in.Mtime.Unix()
+	e.Ino, e.UID, e.GID, e.Size, e.Mtime, e.Ctime = in.Ino, in.UID, in.GID, in.Size, in.Mtime.Unix(), in.Ctime.Unix()
 	switch {
 	case in.IsDir():
 		e.Type, e.RCtime = TypeDir, in.RCtime.Unix()

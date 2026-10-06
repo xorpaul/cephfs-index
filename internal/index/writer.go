@@ -24,7 +24,7 @@ CREATE TABLE meta    (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE names   (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
 CREATE TABLE dirs    (ino INTEGER PRIMARY KEY, parent INTEGER NOT NULL, name_id INTEGER NOT NULL, rctime INTEGER NOT NULL);
 CREATE TABLE entries (name_id INTEGER NOT NULL, parent INTEGER NOT NULL, ino INTEGER NOT NULL, type INTEGER NOT NULL,
-                      uid INTEGER NOT NULL, gid INTEGER NOT NULL, size INTEGER NOT NULL, mtime INTEGER NOT NULL);
+                      uid INTEGER NOT NULL, gid INTEGER NOT NULL, size INTEGER NOT NULL, mtime INTEGER NOT NULL, ctime INTEGER NOT NULL);
 `
 
 // Built after the load: maintaining them during 1e8+ random inserts is far
@@ -128,7 +128,7 @@ func (w *Writer) load(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	entries, err := newBulk(ctx, tx, "INSERT INTO entries", 8)
+	entries, err := newBulk(ctx, tx, "INSERT INTO entries", 9)
 	if err != nil {
 		return err
 	}
@@ -150,7 +150,7 @@ func (w *Writer) load(ctx context.Context) error {
 				}
 				w.Dirs.Add(1)
 			}
-			if err := entries.add(nid, int64(e.Parent), int64(e.Ino), int64(e.Type), int64(e.UID), int64(e.GID), int64(e.Size), e.Mtime); err != nil {
+			if err := entries.add(nid, int64(e.Parent), int64(e.Ino), int64(e.Type), int64(e.UID), int64(e.GID), int64(e.Size), e.Mtime, e.Ctime); err != nil {
 				return err
 			}
 		}
