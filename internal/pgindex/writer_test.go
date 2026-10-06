@@ -174,7 +174,7 @@ func TestChunkStmts(t *testing.T) {
 	if len(got) != 4 {
 		t.Fatalf("chunkStmts: %q", got)
 	}
-	if want := `CREATE INDEX "entries_00003_1_name" ON "a02_new"."entries_00003_1" (name) INCLUDE (parent, ino, type, uid, size, mtime)`; got[1] != want {
+	if want := `CREATE INDEX "entries_00003_1_name" ON "a02_new"."entries_00003_1" (name) INCLUDE (parent, ino, type, uid, size, mtime, ctime)`; got[1] != want {
 		t.Errorf("name index:\n got %s\nwant %s", got[1], want)
 	}
 	if !strings.HasPrefix(got[2], `INSERT INTO "a02_new".dirs`) {
@@ -199,7 +199,7 @@ func TestPostLoadStmts(t *testing.T) {
 		`) PARTITION BY RANGE (part)`,
 		`ALTER TABLE "a02_new".entries ATTACH PARTITION "a02_new"."entries_00000_1" FOR VALUES FROM (1) TO (2)`,
 		`ALTER TABLE "a02_new".entries ATTACH PARTITION "a02_new"."entries_00001_0" FOR VALUES FROM (2) TO (3)`,
-		`CREATE INDEX entries_name ON ONLY "a02_new".entries (name) INCLUDE (parent, ino, type, uid, size, mtime)`,
+		`CREATE INDEX entries_name ON ONLY "a02_new".entries (name) INCLUDE (parent, ino, type, uid, size, mtime, ctime)`,
 		`ALTER INDEX "a02_new".entries_name ATTACH PARTITION "a02_new"."entries_00001_0_name"`,
 		`CREATE UNIQUE INDEX dirs_ino_cover ON "a02_new".dirs (ino) INCLUDE (parent, name)`,
 	} {
@@ -250,12 +250,12 @@ func TestCopyReader(t *testing.T) {
 		}
 		seq, parent, name, ino := i8(), i8(), string(field()), i8()
 		typ, part := field(), binary.BigEndian.Uint16(field())
-		uid, gid, size, mtime, rctime := i8(), i8(), i8(), i8(), i8()
+		uid, gid, size, mtime, ctime, rctime := i8(), i8(), i8(), i8(), i8(), i8()
 		if seq != int64(i+1) || parent != int64(e.Parent) || name != e.Name || ino != int64(e.Ino) ||
 			string(typ) != string([]byte{e.Type}) || part != 7 || uid != int64(e.UID) || gid != int64(e.GID) ||
-			size != int64(e.Size) || mtime != e.Mtime || rctime != e.RCtime {
-			t.Errorf("row %d decoded to seq=%d parent=%d name=%q ino=%d type=%q part=%d uid=%d gid=%d size=%d mtime=%d rctime=%d",
-				i, seq, parent, name, ino, typ, part, uid, gid, size, mtime, rctime)
+			size != int64(e.Size) || mtime != e.Mtime || ctime != e.Ctime || rctime != e.RCtime {
+			t.Errorf("row %d decoded to seq=%d parent=%d name=%q ino=%d type=%q part=%d uid=%d gid=%d size=%d mtime=%d ctime=%d rctime=%d",
+				i, seq, parent, name, ino, typ, part, uid, gid, size, mtime, ctime, rctime)
 		}
 	}
 	if u16() != 0xffff || len(b) != 0 {
