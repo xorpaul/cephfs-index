@@ -93,18 +93,42 @@ Schema layout (`meta.layout = 2`):
 | `<fs>.entries_NNNNN_S` | UNLOGGED leaf tables, one per chunk of `--pg-chunk-rows` rows (default 50M) and COPY stream `S` |
 | `<fs>.dirs` | UNLOGGED, `(ino, parent, name)`, upserted per leaf, used to rebuild paths |
 | `<fs>.meta` | LOGGED key/value metadata |
+| `<fs>.named_paths`, `<fs>.named_paths_names` | Optional: precomputed full paths for `--pg-named-paths` names, see below |
 
 Each of the `--pg-copy-workers` COPY streams writes its share of the current chunk into its own leaf table. It creates the table and fills it with `COPY … WITH (FORMAT binary, FREEZE)` in one transaction, which FREEZE requires. The rows are written frozen and their pages are marked all-visible as they load, so no VACUUM pass has to read and rewrite them. The partition key is a `part SMALLINT` per leaf, not the sequence number, because a chunk's COPY streams interleave sequence numbers. Each leaf's `CHECK (part >= P AND part < P+1)` makes the final ATTACH metadata-only.
 
 When a leaf's COPY commits, a background builder (`--pg-index-builders`, default 2, each with `--pg-chunk-workers` parallel workers) indexes it while the scan continues:
 
-1. A covering index on `name` that also stores `parent, ino, type, uid, size, mtime`.
+1. A covering index on `name` that also stores `parent, ino, type, uid, size, mtime, ctime`.
 2. An upsert of the leaf's dir rows into `dirs`. The primary key is `ino`, and the highest sequence number wins, so the last sighting of a dir that was renamed mid-walk is kept even when leaves finish out of order.
 3. `VACUUM (ANALYZE)`. It skips every page, since they are all frozen, and only reads the visibility map. It is there because `ANALYZE` alone leaves `pg_class.relallvisible` at 0, which makes the planner price index-only scans as heap fetches.
 
 Post-load adds a covering `dirs (ino) INCLUDE (parent, name)` index and runs `VACUUM (FREEZE, ANALYZE)` on `dirs`, the one table that was upserted rather than COPY-frozen. Name searches and the parent lookups that build paths are then index-only scans with `Heap Fetches: 0`, which matters on HDD storage where each heap fetch is a random read. The covering indexes cost roughly 40 bytes more per entry. The progress line shows `tables=<indexed>/<created>` and `queue=N/256`. A queue that stays near 256 means the COPY writer, not the scan, is the bottleneck.
 
 UNLOGGED tables are emptied by PostgreSQL crash recovery. `cephfs-search` detects an empty `entries` and asks for a rebuild.
+
+#### Fast searches for specific names (`--pg-named-paths`)
+
+Finding entries by name is cheap, but each match's path is rebuilt by looking up its parent in `dirs`, then that dir's parent, up to the root: about 8 random reads per match. While `dirs` is cached that takes seconds even for hundreds of thousands of matches. After a rebuild, or when the cache has been pushed out, it takes minutes on HDD storage: about 300,000 `mu-plugins` dirs (one per WordPress site) took 22 minutes to export with a cold cache.
+
+For a few names that are searched for often and match many entries, the build can precompute the full paths:
+
+```
+cephfs-indexd build --pg-dsn "$DSN" --fs a07 --pg-named-paths mu-plugins ...
+```
+
+This writes `<fs>.named_paths (name, path, type, uid, size, mtime, ctime)`, with every entry of those names (all types, not only dirs) and its path relative to the volume root, indexed on `name`, plus `<fs>.named_paths_names`, the list of covered names. `meta.named_paths` records the list too. An exact-name search for a covered name then reads one small index range instead of resolving paths (supported by cephfs-fe since v1.2.0). Other names and pattern searches are unaffected. It is not an index on all of `dirs`: the table holds only the configured names, so it stays small (about 50 MB for 300,000 matches).
+
+The table is built in the staging schema after post-load, by walking `dirs` upwards with one index lookup per ancestor, so it adds roughly the time a cold export of those names would take to the build. If it fails, the build logs a warning and finishes without it; searches then fall back to normal path resolution.
+
+To add or change names on existing schemas without waiting for the next build, run the same step directly. `--names` replaces each schema's current list:
+
+```
+cephfs-indexd named-paths --pg-dsn "$DSN" --fs all --names mu-plugins
+cephfs-indexd named-paths --pg-dsn "$DSN" --fs a07,a08 --names mu-plugins,wp-content
+```
+
+Each schema is updated in one transaction, built under temporary names and swapped in at the end, so running searches only wait for the swap. A schema whose build is running (`<fs>_new` exists) is skipped: the build's final schema swap would otherwise wait for this long read, and searches on that volume would queue behind it. The names must also be in the build's `--pg-named-paths`, or the next rebuild of that volume drops them again.
 
 ### SQLite (`--db-dir`)
 

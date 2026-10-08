@@ -265,3 +265,27 @@ func TestCopyReader(t *testing.T) {
 		t.Errorf("Rows %d Dirs %d", w.Rows.Load(), w.Dirs.Load())
 	}
 }
+
+func TestNamedPathsStmts(t *testing.T) {
+	stmts := namedPathsStmts("a07_new")
+	var insert, swap int
+	for i, q := range stmts {
+		if strings.HasPrefix(q, `INSERT INTO "a07_new".named_paths_new`+"\n") {
+			insert = i
+			if !strings.Contains(q, `FROM "a07_new".entries WHERE name = ANY($1::text[])`) || !strings.Contains(q, `up.depth <= 4096`) || strings.Contains(q, " JOIN top") || strings.Contains(q, "seq") {
+				t.Errorf("paths insert: %s", q)
+			}
+		}
+		if q == `DROP TABLE IF EXISTS "a07_new".named_paths, "a07_new".named_paths_names` {
+			swap = i
+		}
+	}
+	// The current tables are dropped only after the long insert, right
+	// before the renames, so readers wait for the swap only.
+	if insert == 0 || swap <= insert || swap != len(stmts)-5 {
+		t.Errorf("insert at %d, drop of current tables at %d of %d:\n%s", insert, swap, len(stmts), strings.Join(stmts, "\n"))
+	}
+	if got := ParseNames(" mu-plugins, ,wp-content "); strings.Join(got, "|") != "mu-plugins|wp-content" {
+		t.Errorf("ParseNames: %q", got)
+	}
+}

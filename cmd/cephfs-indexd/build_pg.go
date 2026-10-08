@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -25,6 +26,10 @@ func (p *pgOpts) register(fs *flag.FlagSet) {
 	fs.Int64Var(&p.ChunkRows, "pg-chunk-rows", 50_000_000, "seq values per chunk; each COPY stream writes one UNLOGGED leaf table per chunk with COPY FREEZE, indexed while the scan continues (--pg-dsn mode)")
 	fs.IntVar(&p.IndexBuilders, "pg-index-builders", 2, "leaf tables indexed concurrently during the scan (--pg-dsn mode)")
 	fs.IntVar(&p.ChunkWorkers, "pg-chunk-workers", 4, "parallel workers per leaf index build; kept low so builds don't starve the COPY on shared disks (--pg-dsn mode)")
+	fs.Func("pg-named-paths", "comma-separated entry names (e.g. mu-plugins) whose full paths are precomputed into <fs>.named_paths, so exact searches for them skip path resolution (--pg-dsn mode)", func(v string) error {
+		p.NamedPaths = pgindex.ParseNames(v)
+		return nil
+	})
 	fs.IntVar(&p.ParallelWorkers, "pg-parallel-workers", 10, "parallel workers for the final post-load session; the heavy work now runs in the chunk builders (--pg-dsn mode)")
 }
 
@@ -99,8 +104,8 @@ func buildPG(args []string, dsn string) int {
 	}
 
 	sc := s.scanner(&o, w)
-	s.header(&o, fmt.Sprintf(" pg-schema=%s prefix=%s pg-copy-workers=%d pg-maintenance-mem=%s pg-parallel-workers=%d pg-chunk-rows=%d pg-index-builders=%d pg-chunk-workers=%d",
-		s.fs.Name, *prefix, po.CopyWorkers, po.MaintenanceWorkMem, po.ParallelWorkers, po.ChunkRows, po.IndexBuilders, po.ChunkWorkers))
+	s.header(&o, fmt.Sprintf(" pg-schema=%s prefix=%s pg-copy-workers=%d pg-maintenance-mem=%s pg-parallel-workers=%d pg-chunk-rows=%d pg-index-builders=%d pg-chunk-workers=%d pg-named-paths=%s",
+		s.fs.Name, *prefix, po.CopyWorkers, po.MaintenanceWorkMem, po.ParallelWorkers, po.ChunkRows, po.IndexBuilders, po.ChunkWorkers, strings.Join(po.NamedPaths, ",")))
 	started := time.Now()
 	report := func(final bool) {
 		tag := ""

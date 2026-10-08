@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.2.0 (2026-10-08)
+
+### Added
+- **Precomputed paths for chosen names (`--pg-named-paths`)** — the PostgreSQL build can precompute the full path of every entry with a given name (e.g. `mu-plugins`) into `<fs>.named_paths`, with the covered names in `<fs>.named_paths_names` and `meta.named_paths`. Exact-name searches for those names then skip path resolution, which needs one random read per directory level when `dirs` is not cached. A failure only logs a warning; the build still completes.
+- **`cephfs-indexd named-paths`** — builds the same table on existing schemas (`--fs all` or a list), so names can be added without a rebuild. Each schema is swapped in one short transaction.
+
 ## v1.1.0 (2026-10-06)
 
 ### Added

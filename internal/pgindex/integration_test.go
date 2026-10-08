@@ -182,3 +182,113 @@ func heapFetches(t *testing.T, raw []byte) int {
 	}
 	return sum(plans[0]["Plan"].(map[string]any))
 }
+
+// TestNamedPathsAgainstPostgres checks that named_paths holds exactly the
+// paths Search resolves level by level: entries under the root, nested
+// dirs, a parent missing from dirs, non-dir entries of the same name and a
+// name that is not covered. Same DSN requirements as TestBuildAgainstPostgres.
+func TestNamedPathsAgainstPostgres(t *testing.T) {
+	dsn := os.Getenv("CEPHFS_INDEX_TEST_DSN")
+	if dsn == "" {
+		t.Skip("CEPHFS_INDEX_TEST_DSN not set")
+	}
+	ctx := context.Background()
+	admin, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	const db = "cephfs_index_it_named"
+	for _, q := range []string{
+		`DROP DATABASE IF EXISTS ` + db,
+		`CREATE DATABASE ` + db + ` ENCODING 'SQL_ASCII' LC_COLLATE 'C' LC_CTYPE 'C' TEMPLATE template0`,
+	} {
+		if _, err := admin.Exec(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pool, err := NewPool(ctx, dsn+" dbname="+db, 16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+
+	opts := Options{CopyWorkers: 2, ChunkRows: 1000, IndexBuilders: 1, MaintenanceWorkMem: "64MB", NamedPaths: []string{"mu-plugins", "absent"}}
+	w, err := Create(ctx, pool, "t02", opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := func(parent, ino uint64, name string) scan.Entry {
+		return scan.Entry{Parent: parent, Name: name, Ino: ino, Type: scan.TypeDir, UID: 33, Mtime: 1700000000, Ctime: 1700000100}
+	}
+	w.Emit([]scan.Entry{
+		d(scan.RootIno, 0x100, "mu-plugins"),
+		d(scan.RootIno, 0x101, "site"),
+		d(0x101, 0x102, "wp-content"),
+		d(0x102, 0x103, "mu-plugins"),
+		d(0x103, 0x104, "mu-plugins"),
+		d(0xdead, 0x105, "mu-plugins"),
+		{Parent: 0x106, Name: "mu-plugins", Ino: 0x200, Type: scan.TypeFile, UID: 7, Size: 42, Mtime: 1, Ctime: 2},
+		{Parent: 0x101, Name: "mu-plugins", Ino: 0x200, Type: scan.TypeHardlink},
+		d(0x102, 0x106, "plugins"),
+	})
+	if err := w.Finish(ctx, map[string]string{"prefix": "/mnt/t02", "complete": "true"}, "t02"); err != nil {
+		t.Fatal(err)
+	}
+
+	var covered []string
+	if err := pool.QueryRow(ctx, `SELECT array_agg(name ORDER BY name) FROM t02.named_paths_names`).Scan(&covered); err != nil {
+		t.Fatal(err)
+	}
+	var metaNames string
+	pool.QueryRow(ctx, `SELECT value FROM t02.meta WHERE key = 'named_paths'`).Scan(&metaNames)
+	if strings.Join(covered, ",") != "absent,mu-plugins" || metaNames != "mu-plugins,absent" {
+		t.Errorf("covered %q, meta %q", covered, metaNames)
+	}
+
+	rows, err := pool.Query(ctx, `SELECT path, type, uid, size, mtime, ctime FROM t02.named_paths WHERE name = 'mu-plugins'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	named := map[string]string{}
+	for rows.Next() {
+		var p, typ string
+		var uid, size, mtime, ctime int64
+		if err := rows.Scan(&p, &typ, &uid, &size, &mtime, &ctime); err != nil {
+			t.Fatal(err)
+		}
+		if strings.HasPrefix(p, "/") {
+			p = "/mnt/t02" + p
+		}
+		named[p] = fmt.Sprintf("%s %d %d %d %d", typ, uid, size, mtime, ctime)
+	}
+	rows.Close()
+
+	db2, err := Open(ctx, pool, "t02")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved := map[string]string{}
+	err = db2.Search(ctx, index.Query{Re: regexp.MustCompile(`^mu-plugins$`), Pattern: `^mu-plugins$`, UID: -1}, func(m index.Match) error {
+		resolved[m.Path] = fmt.Sprintf("%c %d %d %d %d", m.Type, m.UID, m.Size, m.Mtime, m.Ctime)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resolved) != 6 || fmt.Sprint(named) != fmt.Sprint(resolved) {
+		t.Errorf("named_paths differs from resolved paths:\n named    %v\n resolved %v", named, resolved)
+	}
+	for _, p := range []string{
+		"/mnt/t02/mu-plugins",                            // dir under the root
+		"/mnt/t02/site/wp-content/mu-plugins",            // nested dir
+		"/mnt/t02/site/wp-content/mu-plugins/mu-plugins", // dir inside a match
+		"<ino 0xdead>/mu-plugins",                        // parent missing from dirs
+		"/mnt/t02/site/wp-content/plugins/mu-plugins",    // file of the same name
+		"/mnt/t02/site/mu-plugins",                       // hardlink
+	} {
+		if _, ok := named[p]; !ok {
+			t.Errorf("missing %q in %v", p, named)
+		}
+	}
+}

@@ -46,12 +46,13 @@ var entryCols = []string{"seq", "parent", "name", "ino", "type", "part", "uid", 
 
 // Options tunes the load. Zero values fall back to the defaults below.
 type Options struct {
-	CopyWorkers        int    // parallel COPY streams into entries
-	MaintenanceWorkMem string // per post-load and chunk-builder session, e.g. "4GB"
-	ParallelWorkers    int    // parallel workers for the final post-load session (attach, dirs index and VACUUM)
-	ChunkRows          int64  // seq values per chunk; each COPY stream writes one leaf table per chunk
-	IndexBuilders      int    // leaf tables indexed concurrently during the scan
-	ChunkWorkers       int    // parallel workers per leaf index build
+	CopyWorkers        int      // parallel COPY streams into entries
+	MaintenanceWorkMem string   // per post-load and chunk-builder session, e.g. "4GB"
+	ParallelWorkers    int      // parallel workers for the final post-load session (attach, dirs index and VACUUM)
+	ChunkRows          int64    // seq values per chunk; each COPY stream writes one leaf table per chunk
+	IndexBuilders      int      // leaf tables indexed concurrently during the scan
+	ChunkWorkers       int      // parallel workers per leaf index build
+	NamedPaths         []string // entry names whose full paths are precomputed into named_paths
 
 	ProgressEvery time.Duration     // post-load progress poll interval; 0 disables
 	ProgressLog   func(line string) // receives one line per active post-load session
@@ -499,6 +500,8 @@ func (w *Writer) Finish(ctx context.Context, meta map[string]string, finalSchema
 		return fmt.Errorf("post-load: %w", err)
 	}
 
+	namedPaths := w.buildNamedPaths(ctx)
+
 	conn, err := w.pool.Acquire(ctx)
 	if err != nil {
 		w.dropAndUnlock()
@@ -523,6 +526,9 @@ func (w *Writer) Finish(ctx context.Context, meta map[string]string, finalSchema
 	// layout 2: leaves partitioned by part and filled with COPY FREEZE,
 	// covering name and dirs indexes (index-only searches).
 	meta["layout"] = "2"
+	if namedPaths {
+		meta["named_paths"] = strings.Join(w.opts.NamedPaths, ",")
+	}
 	for k, v := range meta {
 		if _, err := conn.Exec(ctx, `INSERT INTO `+s+`.meta (key, value) VALUES ($1, $2)`, k, v); err != nil {
 			w.dropAndUnlock()
